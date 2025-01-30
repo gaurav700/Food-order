@@ -1,49 +1,112 @@
-import { useContext } from "react";
-import CartContext from "../store/CartContext";
-import { currencyFormatter } from "../util/CurrencyFormatter";
-import Input from "./Input";
-import Button from "./Button";
-import UserProgressContext from "../store/UserProgressContext";
-import Modal from "./Modal";
-export default function Checkout() {
-  const { items } = useContext(CartContext);
-  const { progress, hideCheckout } = useContext(UserProgressContext);
+import { useContext, useActionState } from "react";
 
-  const cartTotal = items.reduce(
-    (totalPrice, item) => item.price * item.quantity + totalPrice,
+import Modal from "./UI/Modal.jsx";
+import CartContext from "../store/CartContext.jsx";
+import { currencyFormatter } from "../util/formatting.js";
+import Input from "./UI/Input.jsx";
+import Button from "./UI/Button.jsx";
+import UserProgressContext from "../store/UserProgressContext.jsx";
+import useHttp from "../hooks/useHttp.jsx";
+import Error from "./Error.jsx";
+
+const requestConfig = {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+};
+
+export default function Checkout() {
+  const cartCtx = useContext(CartContext);
+  const userProgressCtx = useContext(UserProgressContext);
+
+  const { data, error, sendRequest, clearData } = useHttp(
+    "http://localhost:3000/orders",
+    requestConfig
+  );
+
+  const cartTotal = cartCtx.items.reduce(
+    (totalPrice, item) => totalPrice + item.quantity * item.price,
     0
   );
 
   function handleClose() {
-    hideCheckout();
+    userProgressCtx.hideCheckout();
   }
 
-  function handleSubmit(event) {
-    event.preventDefault();
+  function handleFinish() {
+    userProgressCtx.hideCheckout();
+    cartCtx.clearCart();
+    clearData();
+  }
 
-    const fd = new FormData(event.target);
-    const data = Object.fromEntries(fd.entries());
+  async function checkoutAction(prevState, fd) {
+    const customerData = Object.fromEntries(fd.entries()); // { email: test@example.com }
+
+    await sendRequest(
+      JSON.stringify({
+        order: {
+          items: cartCtx.items,
+          customer: customerData,
+        },
+      })
+    );
+  }
+
+  const [formState, formAction, isSending] = useActionState(
+    checkoutAction,
+    null
+  );
+
+  let actions = (
+    <>
+      <Button type="button" textOnly onClick={handleClose}>
+        Close
+      </Button>
+      <Button>Submit Order</Button>
+    </>
+  );
+
+  if (isSending) {
+    actions = <span>Sending order data...</span>;
+  }
+
+  if (data && !error) {
+    return (
+      <Modal
+        open={userProgressCtx.progress === "checkout"}
+        onClose={handleFinish}
+      >
+        <h2>Success!</h2>
+        <p>Your order was submitted successfully.</p>
+        <p>
+          We will get back to you with more details via email within the next
+          few minutes.
+        </p>
+        <p className="modal-actions">
+          <Button onClick={handleFinish}>Okay</Button>
+        </p>
+      </Modal>
+    );
   }
 
   return (
-    <Modal open={progress === "checkout"}>
-      <form onSubmit={handleSubmit}>
+    <Modal open={userProgressCtx.progress === "checkout"} onClose={handleClose}>
+      <form action={formAction}>
         <h2>Checkout</h2>
         <p>Total Amount: {currencyFormatter.format(cartTotal)}</p>
-        <Input label="Full Name" type="text" id="fullname" />
-        <Input label="Email Address" type="email" id="email" />
+
+        <Input label="Full Name" type="text" id="name" />
+        <Input label="E-Mail Address" type="email" id="email" />
         <Input label="Street" type="text" id="street" />
         <div className="control-row">
           <Input label="Postal Code" type="text" id="postal-code" />
           <Input label="City" type="text" id="city" />
         </div>
 
-        <p>
-          <Button textOnly type="button" onClick={handleClose}>
-            Close
-          </Button>
-          <Button>Submit Order</Button>
-        </p>
+        {error && <Error title="Failed to submit order" message={error} />}
+
+        <p className="modal-actions">{actions}</p>
       </form>
     </Modal>
   );
